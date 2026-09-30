@@ -41,7 +41,7 @@ export default function Folders() {
   const [bellBusy, setBellBusy] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
 
-  // إعادة المزامنة وتحديث البيانات فور تغيير الحساب أو الدخول
+  // إعادة المزامنة وتحديث البيانات فور تغيير الحساب أو الدخول/الخروج
   useEffect(() => {
     const { data: listener } = auth.onAuthStateChange((_event, session) => {
       setUser(session?.user || auth.getCurrentUser())
@@ -74,10 +74,12 @@ export default function Folders() {
     setCreateError('')
     try {
       const generatedId = 'f_' + Date.now().toString() + '_' + Math.random().toString(36).substring(2, 7)
+      const currentUser = auth.getCurrentUser()
       
       const folderPayload = {
         id: generatedId,
         _id: generatedId,
+        user_id: currentUser?.id || null, // تفعيل ربط المجلد بحساب المستخدِم سحابياً
         name: name,
         title: name,
         label: name,
@@ -397,8 +399,8 @@ export default function Folders() {
       <AuthModal
         open={showAuth}
         onClose={() => setShowAuth(false)}
-        onSuccess={() => {
-          setUser(auth.getCurrentUser())
+        onSuccess={(updatedUser) => {
+          setUser(updatedUser ?? auth.getCurrentUser())
           window.dispatchEvent(new Event('db_updated'))
         }}
       />
