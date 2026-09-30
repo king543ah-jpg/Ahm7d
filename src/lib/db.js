@@ -1,24 +1,38 @@
 import { supabase } from './supabase'
 
-/**
- * جلب معرف المستخدم الحالي من جلسة Supabase المحفوظة
- */
-const getCurrentUserId = () => {
+export async function getUserId() {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.user?.id) return session.user.id
+  } catch (e) {}
+
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
       if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-        const session = JSON.parse(localStorage.getItem(key) || '{}')
-        if (session?.user) return session.user.id
+        const item = JSON.parse(localStorage.getItem(key) || '{}')
+        if (item?.user?.id) return item.user.id
+        if (item?.currentSession?.user?.id) return item.currentSession.user.id
       }
     }
   } catch (e) {}
   return null
 }
 
-/**
- * التخزين المحلي المؤقت (Local Cache)
- */
+export function getCurrentUserIdSync() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+        const item = JSON.parse(localStorage.getItem(key) || '{}')
+        if (item?.user?.id) return item.user.id
+        if (item?.currentSession?.user?.id) return item.currentSession.user.id
+      }
+    }
+  } catch (e) {}
+  return null
+}
+
 const getLocalCollection = (collection) => {
   try {
     const data = localStorage.getItem(`db_${collection}`);
@@ -40,36 +54,76 @@ const setLocalCollection = (collection, items) => {
 };
 
 export const dbImpl = {
-  // جلب البيانات من السحابة (Supabase) وتحديث الكاش المحلي
-  getAll: async (collection) => {
-    const userId = getCurrentUserId();
-    if (!userId) return getLocalCollection(collection);
+  // مزامنة ذكية: ترفع العناصر المحلية غير المربوطة بحساب وتجلب عناصر السحابة وتدمجها
+  syncCollection: async (collection) => {
+    const userId = await getUserId();
+    const localItems = getLocalCollection(collection);
+
+    if (!userId) {
+      return localItems;
+    }
 
     try {
-      const { data, error } = await supabase
+      // 1. رفع المجلدات/الوثائق المحلية التي أُنشئت بدون حساب
+      const anonymousItems = localItems.filter(item => !item.user_id || item.user_id !== userId);
+      
+      if (anonymousItems.length > 0) {
+        for (const item of anonymousItems) {
+          const itemToUpload = { ...item, user_id: userId };
+          await supabase.from(collection).upsert(itemToUpload, { onConflict: 'id' }).catch(() => {});
+        }
+      }
+
+      // 2. جلب كل بيانات المستخدم من Supabase
+      const { data: cloudItems, error } = await supabase
         .from(collection)
         .select('*')
         .eq('user_id', userId);
 
-      if (error) throw error;
+      if (error) {
+        console.warn(`[db] Cloud sync error for ${collection}:`, error);
+        return localItems;
+      }
 
-      if (data) {
-        setLocalCollection(collection, data);
-        return data;
+      if (cloudItems) {
+        // دمج بيانات السحابة مع المحلي بدون مسح أي شيء
+        const map = new Map();
+        cloudItems.forEach(item => map.set(String(item.id || item._id), item));
+        localItems.forEach(item => {
+          const id = String(item.id || item._id);
+          if (!map.has(id)) {
+            map.set(id, { ...item, user_id: userId });
+          }
+        });
+
+        const merged = Array.from(map.values());
+        setLocalCollection(collection, merged);
+        return merged;
       }
     } catch (e) {
-      console.warn(`[db] Fetching ${collection} from Supabase failed, using cache:`, e);
+      console.error(`[db] Sync exception for ${collection}:`, e);
     }
-    return getLocalCollection(collection);
+
+    return localItems;
+  },
+
+  syncAll: async () => {
+    await dbImpl.syncCollection('folders');
+    await dbImpl.syncCollection('documents');
+    await dbImpl.syncCollection('docs');
+  },
+
+  getAll: async (collection) => {
+    return await dbImpl.syncCollection(collection);
   },
 
   select: async (collection) => {
-    return dbImpl.getAll(collection);
+    return await dbImpl.syncCollection(collection);
   },
 
   get: async (collection, id) => {
-    if (!id) return dbImpl.getAll(collection);
-    const userId = getCurrentUserId();
+    if (!id) return await dbImpl.getAll(collection);
+    const userId = await getUserId();
 
     if (userId) {
       try {
@@ -88,29 +142,28 @@ export const dbImpl = {
     return items.find((item) => String(item.id) === String(id) || String(item._id) === String(id)) || null;
   },
 
-  // إضافة عنصر جديد وسحبه إلى السحابة فوراً
   insert: async (collection, doc) => {
-    const userId = getCurrentUserId();
-    const generatedId = doc.id || doc._id || (Date.now().toString() + Math.random().toString(36).substring(2, 6));
+    const userId = (await getUserId()) || getCurrentUserIdSync();
+    const generatedId = doc.id || doc._id || ('f_' + Date.now().toString() + '_' + Math.random().toString(36).substring(2, 7));
     
     const newDoc = {
       ...doc,
       id: String(generatedId),
       _id: String(generatedId),
-      user_id: userId,
+      user_id: userId || null,
       createdAt: doc.createdAt || new Date().toISOString()
     };
 
-    // 1. التحديث المحلي السريع
+    // 1. التحديث المحلي الفوري
     const localItems = getLocalCollection(collection);
-    localItems.push(newDoc);
-    setLocalCollection(collection, localItems);
+    const filtered = localItems.filter(item => String(item.id || item._id) !== String(newDoc.id));
+    filtered.push(newDoc);
+    setLocalCollection(collection, filtered);
 
-    // 2. الرفع إلى Supabase
+    // 2. الرفع المباشر لسوبابيز
     if (userId) {
       try {
-        const { error } = await supabase.from(collection).insert([newDoc]);
-        if (error) console.error(`[db] Insert error in ${collection}:`, error);
+        await supabase.from(collection).upsert(newDoc, { onConflict: 'id' });
       } catch (e) {
         console.error(`[db] Insert exception in ${collection}:`, e);
       }
@@ -119,9 +172,8 @@ export const dbImpl = {
     return newDoc;
   },
 
-  // تعديل عنصر في السحابة وفي الكاش
   update: async (collection, id, updates) => {
-    const userId = getCurrentUserId();
+    const userId = (await getUserId()) || getCurrentUserIdSync();
 
     // 1. التحديث المحلي
     const localItems = getLocalCollection(collection);
@@ -146,9 +198,8 @@ export const dbImpl = {
     return updatedLocal;
   },
 
-  // حذف عنصر من السحابة وفي الكاش
   delete: async (collection, id) => {
-    const userId = getCurrentUserId();
+    const userId = (await getUserId()) || getCurrentUserIdSync();
 
     // 1. الحذف المحلي
     const localItems = getLocalCollection(collection);

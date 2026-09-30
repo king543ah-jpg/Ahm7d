@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
+import { db } from './db'
 
 export const auth = {
-  // إنشاء حساب جديد بالإيميل وكلمة المرور
   signUp: async (email, password, name = '') => {
     const cleanEmail = email ? email.trim() : ''
     const { data, error } = await supabase.auth.signUp({
@@ -12,10 +12,14 @@ export const auth = {
       }
     })
     if (error) throw error
+
+    if (data?.session) {
+      await db.syncAll().catch(() => {})
+      window.dispatchEvent(new Event('db_updated'))
+    }
     return data
   },
 
-  // تسجيل الدخول بالإيميل وكلمة المرور
   signIn: async (email, password) => {
     const cleanEmail = email ? email.trim() : ''
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -23,10 +27,14 @@ export const auth = {
       password,
     })
     if (error) throw error
+
+    if (data?.session) {
+      await db.syncAll().catch(() => {})
+      window.dispatchEvent(new Event('db_updated'))
+    }
     return data
   },
 
-  // تسجيل الدخول عبر Google
   signInWithGoogle: async () => {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -36,7 +44,6 @@ export const auth = {
     return data
   },
 
-  // تسجيل الدخول عبر Apple
   signInWithApple: async () => {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'apple',
@@ -46,20 +53,25 @@ export const auth = {
     return data
   },
 
-  // تسجيل الخروج وتنظيف الذاكرة المحلية
   signOut: async () => {
     try {
       await supabase.auth.signOut()
     } catch (e) {
       console.warn('Sign out warning:', e)
     }
-    localStorage.clear()
+
+    localStorage.removeItem('db_folders')
+    localStorage.removeItem('live_folders')
+    localStorage.removeItem('db_documents')
+    localStorage.removeItem('live_documents')
+    localStorage.removeItem('db_docs')
+    localStorage.removeItem('live_docs')
+
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('db_updated'))
     return true
   },
 
-  // جلب بيانات المستخدم الحالي غير المزامنة (Async)
   getUser: async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -69,23 +81,26 @@ export const auth = {
     }
   },
 
-  // جلب سريع للمستخدم من الجلسة المخزنة محلياً (Sync)
   getCurrentUser: () => {
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i)
         if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-          const session = JSON.parse(localStorage.getItem(key) || '{}')
-          if (session?.user) return session.user
+          const item = JSON.parse(localStorage.getItem(key) || '{}')
+          if (item?.user) return item.user
+          if (item?.currentSession?.user) return item.currentSession.user
         }
       }
     } catch (e) {}
     return null
   },
 
-  // الاستماع لتغير حالة الحساب (تسجيل دخول/خروج)
   onAuthStateChange: (callback) => {
-    return supabase.auth.onAuthStateChange((event, session) => {
+    return supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        await db.syncAll().catch(() => {})
+        window.dispatchEvent(new Event('db_updated'))
+      }
       if (typeof callback === 'function') {
         callback(event, session)
       }

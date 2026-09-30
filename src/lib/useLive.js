@@ -1,7 +1,5 @@
-/**
- * Application Client SDK — Reactive Live State Integration
- */
 import { useState, useEffect } from 'react';
+import { db } from './db';
 
 export function useLive(key, initialValue = []) {
   const readData = () => {
@@ -21,14 +19,35 @@ export function useLive(key, initialValue = []) {
   const [data, setData] = useState(readData);
 
   useEffect(() => {
+    let isMounted = true;
+
+    // طلب مزامنة فورية في الخلفية مع السحابة عند تحميل الشاشة
+    const syncFromCloud = async () => {
+      try {
+        if (db && typeof db.syncCollection === 'function') {
+          const freshData = await db.syncCollection(key);
+          if (isMounted && freshData) {
+            setData(freshData);
+          }
+        }
+      } catch (e) {
+        console.warn(`[useLive] Sync warning for ${key}:`, e);
+      }
+    };
+
+    syncFromCloud();
+
     const handleUpdate = () => {
-      setData(readData());
+      if (isMounted) {
+        setData(readData());
+      }
     };
 
     window.addEventListener('storage', handleUpdate);
     window.addEventListener('db_updated', handleUpdate);
 
     return () => {
+      isMounted = false;
       window.removeEventListener('storage', handleUpdate);
       window.removeEventListener('db_updated', handleUpdate);
     };
@@ -46,7 +65,6 @@ export function useLive(key, initialValue = []) {
     }
   };
 
-  // كائن هجين يدعم التفكيك المباشر وتفادي خطأ Array.isArray في الواجهة
   const result = {
     data: Array.isArray(data) ? data : [],
     loading: false,

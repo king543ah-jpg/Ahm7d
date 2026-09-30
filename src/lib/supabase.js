@@ -3,7 +3,6 @@ import { createClient } from '@supabase/supabase-js'
 const rawUrl = import.meta.env.VITE_SUPABASE_URL || ''
 const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
 
-// تنظيف الرابط تلقائياً وحذف الشرطات المائلة الزائدة في آخره لتفادي خطأ Invalid Path
 const supabaseUrl = rawUrl.trim().replace(/\/+$/, '')
 const supabaseAnonKey = rawKey.trim()
 
