@@ -2,12 +2,13 @@ import { supabase } from './supabase'
 
 export const auth = {
   // إنشاء حساب جديد بالإيميل وكلمة المرور
-  signUp: async (email, password, name) => {
+  signUp: async (email, password, name = '') => {
+    const cleanEmail = email ? email.trim() : ''
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: cleanEmail,
       password,
       options: {
-        data: { full_name: name || '' }
+        data: { full_name: name }
       }
     })
     if (error) throw error
@@ -16,8 +17,9 @@ export const auth = {
 
   // تسجيل الدخول بالإيميل وكلمة المرور
   signIn: async (email, password) => {
+    const cleanEmail = email ? email.trim() : ''
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: cleanEmail,
       password,
     })
     if (error) throw error
