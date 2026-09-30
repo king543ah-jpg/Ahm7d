@@ -36,8 +36,12 @@ export default function DocForm() {
   useEffect(() => {
     if (!isEdit) return
     let alive = true
-    db.get('documents', docId)
-      .then((doc) => {
+    
+    const fetchDoc = async () => {
+      try {
+        let doc = await db.get('documents', docId)
+        if (!doc) doc = await db.get('docs', docId)
+
         if (!alive || !doc) return
         setName(doc.name || doc.title || '')
         setExpiryDate(doc.expiryDate || doc.expiry_date || '')
@@ -49,11 +53,14 @@ export default function DocForm() {
         setReminders(rs)
         setPrevReminders(rs)
         setLinks(Array.isArray(doc.links) ? doc.links : [])
-      })
-      .catch(console.error)
-      .finally(() => {
+      } catch (err) {
+        console.error(err)
+      } finally {
         if (alive) setLoadingDoc(false)
-      })
+      }
+    }
+
+    fetchDoc()
     return () => { alive = false }
   }, [isEdit, docId])
 
@@ -149,13 +156,18 @@ export default function DocForm() {
         .filter((f) => f.label || f.value)
 
       const payload = {
+        id,
+        _id: id,
         folderId,
         folder_id: folderId,
         name: trimmed,
+        title: trimmed,
         expiryDate: expiryDate || '',
         expiry_date: expiryDate || '',
         customFields: cleanFields,
+        custom_fields: cleanFields,
         imageUrl: imageUrl || '',
+        image_url: imageUrl || '',
         files,
         links: filledLinks.map((l) => ({ title: (l.title || '').trim(), url: normalizeUrl(l.url) })),
       }
@@ -188,9 +200,13 @@ export default function DocForm() {
 
       if (isEdit) {
         await db.update('documents', id, payload)
+        await db.update('docs', id, payload).catch(() => {})
       } else {
         await db.insert('documents', payload)
+        await db.insert('docs', payload).catch(() => {})
       }
+
+      window.dispatchEvent(new Event('db_updated'))
 
       if (folderId) {
         navigate(`/folder/${folderId}`, { replace: true })

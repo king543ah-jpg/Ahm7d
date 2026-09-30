@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, Plus, Trash2, FileText, ChevronLeft, Calendar, Image as ImageIcon, Paperclip } from 'lucide-react'
+import { ArrowRight, Plus, Trash2, FileText, ChevronLeft, Calendar, Image as ImageIcon, Paperclip, Loader2 } from 'lucide-react'
 import { db } from '../lib/db'
 import { useLive } from '../lib/useLive'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -16,9 +16,16 @@ export default function FolderDocs() {
 
   const liveFolders = useLive('folders')
   const folders = Array.isArray(liveFolders) ? liveFolders : (liveFolders?.data || [])
+  const loadingFolders = liveFolders?.loading ?? false
 
   const liveDocs = useLive('documents', { order: '-createdAt' })
-  const rawDocs = Array.isArray(liveDocs) ? liveDocs : (liveDocs?.data || [])
+  const altDocs = useLive('docs', { order: '-createdAt' })
+  
+  const docsList = (Array.isArray(liveDocs) ? liveDocs : liveDocs?.data) || []
+  const altList = (Array.isArray(altDocs) ? altDocs : altDocs?.data) || []
+  const rawDocs = docsList.length >= altList.length ? docsList : altList
+  
+  const loadingDocs = (liveDocs?.loading && altDocs?.loading) ?? false
 
   const folder = (folders || []).find(
     (f) => String(f.id || f._id) === String(currentFolderId)
@@ -47,6 +54,7 @@ export default function FolderDocs() {
         }
         if (db && typeof db.delete === 'function') {
           await db.delete('documents', doc.id || doc._id)
+          await db.delete('docs', doc.id || doc._id).catch(() => {})
         }
       }
 
@@ -54,6 +62,7 @@ export default function FolderDocs() {
         await db.delete('folders', targetFolderId)
       }
 
+      window.dispatchEvent(new Event('db_updated'))
       navigate('/')
     } catch (err) {
       console.error(err)
@@ -61,6 +70,8 @@ export default function FolderDocs() {
       setDeleting(false)
     }
   }
+
+  const isLoading = loadingFolders || loadingDocs
 
   return (
     <div className="h-full overflow-y-auto paper-bg">
@@ -101,7 +112,12 @@ export default function FolderDocs() {
           إضافة وثيقة جديدة
         </Link>
 
-        {folderDocs.length === 0 ? (
+        {isLoading ? (
+          <div className="mt-14 flex flex-col items-center justify-center text-stone-500 gap-3">
+            <Loader2 className="animate-spin text-primary" size={32} />
+            <p className="text-sm font-semibold">جارٍ جلب الوثائق من السحابة…</p>
+          </div>
+        ) : folderDocs.length === 0 ? (
           <div className="mt-14 flex flex-col items-center text-center">
             <div className="flex h-24 w-24 items-center justify-center rounded-full bg-amber-100/60 text-amber-700">
               <FileText size={44} />
@@ -135,16 +151,15 @@ export default function FolderDocs() {
                           {docTitle}
                         </h3>
                         
-                        {/* الشارات المباشرة من الخارج */}
                         <div className="mt-1 flex flex-wrap items-center gap-2">
-                          <StatusBadge expiryDate={doc.expiryDate} />
-                          {doc.expiryDate && (
+                          <StatusBadge expiryDate={doc.expiryDate || doc.expiry_date} />
+                          {(doc.expiryDate || doc.expiry_date) && (
                             <span className="text-xs font-bold text-stone-500 flex items-center gap-1">
                               <Calendar size={12} />
-                              {remainingText(doc.expiryDate)}
+                              {remainingText(doc.expiryDate || doc.expiry_date)}
                             </span>
                           )}
-                          {doc.imageUrl && (
+                          {(doc.imageUrl || doc.image_url) && (
                             <span className="flex items-center gap-0.5 text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
                               <ImageIcon size={10} /> صورة
                             </span>

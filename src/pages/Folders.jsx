@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { FolderPlus, Trash2, Bell, ChevronLeft, X, MoonStar, Sun, Moon, Settings, Search as SearchIcon, SlidersHorizontal, Folder as FolderIcon } from 'lucide-react'
+import { FolderPlus, Trash2, Bell, ChevronLeft, X, MoonStar, Sun, Moon, Settings, Search as SearchIcon, SlidersHorizontal, Folder as FolderIcon, Loader2 } from 'lucide-react'
 import { cancelDocReminders } from '../hooks/reminders'
 import SettingsSheet from '../components/SettingsSheet'
 import AuthModal from '../components/AuthModal'
@@ -14,10 +14,14 @@ import { useTheme } from '../hooks/theme'
 export default function Folders() {
   const liveFolders = useLive('folders')
   const rawFolders = Array.isArray(liveFolders) ? liveFolders : (liveFolders?.data || [])
-  const loading = liveFolders?.loading ?? false
+  const loadingFolders = liveFolders?.loading ?? false
 
   const liveDocs = useLive('documents')
-  const docs = Array.isArray(liveDocs) ? liveDocs : (liveDocs?.data || [])
+  const altDocs = useLive('docs')
+  
+  const docsList = (Array.isArray(liveDocs) ? liveDocs : liveDocs?.data) || []
+  const altList = (Array.isArray(altDocs) ? altDocs : altDocs?.data) || []
+  const docs = docsList.length >= altList.length ? docsList : altList
 
   const [user, setUser] = useState(() => auth.getCurrentUser())
   const [showAuth, setShowAuth] = useState(false)
@@ -37,10 +41,11 @@ export default function Folders() {
   const [bellBusy, setBellBusy] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
 
-  // متابعة تحديث حالة المستخدم تلقائياً
+  // إعادة المزامنة وتحديث البيانات فور تغيير الحساب أو الدخول
   useEffect(() => {
     const { data: listener } = auth.onAuthStateChange((_event, session) => {
       setUser(session?.user || auth.getCurrentUser())
+      window.dispatchEvent(new Event('db_updated'))
     })
     return () => {
       listener?.subscription?.unsubscribe()
@@ -80,6 +85,7 @@ export default function Folders() {
       }
 
       await db.insert('folders', folderPayload)
+      window.dispatchEvent(new Event('db_updated'))
 
       setNewName('')
       setShowCreate(false)
@@ -103,9 +109,11 @@ export default function Folders() {
           await cancelDocReminders(doc)
         }
         await db.delete('documents', doc.id || doc._id)
+        await db.delete('docs', doc.id || doc._id).catch(() => {})
       }
 
       await db.delete('folders', targetId)
+      window.dispatchEvent(new Event('db_updated'))
       setDeleteTarget(null)
     } catch (err) {
       console.error(err)
@@ -195,7 +203,6 @@ export default function Folders() {
               <Bell size={20} />
             </button>
             
-            {/* زر الحساب - يفتح النافذة الآن */}
             <button
               onClick={() => setShowAuth(true)}
               title={user ? 'حسابي' : 'تسجيل الدخول'}
@@ -254,8 +261,11 @@ export default function Folders() {
           <ChevronLeft size={22} className="text-primary/50" />
         </Link>
 
-        {loading ? (
-          <div className="mt-10 text-center text-stone-500">جارٍ التحميل…</div>
+        {loadingFolders ? (
+          <div className="mt-14 flex flex-col items-center justify-center text-stone-500 gap-3">
+            <Loader2 className="animate-spin text-primary" size={32} />
+            <p className="text-sm font-semibold">جارٍ جلب المجلدات من السحابة…</p>
+          </div>
         ) : !rawFolders || rawFolders.length === 0 ? (
           <div className="mt-14 flex flex-col items-center text-center">
             <div className="flex h-24 w-24 items-center justify-center rounded-full bg-primary/10">
@@ -387,7 +397,10 @@ export default function Folders() {
       <AuthModal
         open={showAuth}
         onClose={() => setShowAuth(false)}
-        onSuccess={() => setUser(auth.getCurrentUser())}
+        onSuccess={() => {
+          setUser(auth.getCurrentUser())
+          window.dispatchEvent(new Event('db_updated'))
+        }}
       />
 
       <ConfirmDialog
